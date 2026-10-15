@@ -42,7 +42,9 @@ class OverlayShowingService : Service() {
 
     private var wsServer: StrokeWebSocketServer? = null
     private val currentStrokePoints = mutableListOf<FloatArray>()
+    private val listStrokePoints = mutableListOf<FloatArray>()
     private val strokeLock = Any()
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onBind(intent: Intent) = null
 
@@ -190,22 +192,32 @@ class OverlayShowingService : Service() {
         override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint?) {
             synchronized(strokeLock) {
                 currentStrokePoints.clear()
+                listStrokePoints.clear()
                 touchPoint?.let {
-                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, it.timestamp.toFloat()))
+                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, 0f))
                 }
             }
         }
 
         override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint?) {
-            val strokeToSend = mutableListOf<FloatArray>()
             synchronized(strokeLock) {
                 touchPoint?.let {
-                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, it.timestamp.toFloat()))
+                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, 0f))
                 }
-                strokeToSend.addAll(currentStrokePoints)
-                currentStrokePoints.clear()
             }
-            if (strokeToSend.isNotEmpty()) {
+            // The SDK may deliver the full TouchPointList just before or just after
+            // onEndRawDrawing; wait briefly and prefer the list when we have it.
+            mainHandler.postDelayed({ flushStroke() }, 120)
+        }
+
+        private fun flushStroke() {
+            val strokeToSend = mutableListOf<FloatArray>()
+            synchronized(strokeLock) {
+                strokeToSend.addAll(if (listStrokePoints.size > 1) listStrokePoints else currentStrokePoints)
+                currentStrokePoints.clear()
+                listStrokePoints.clear()
+            }
+            if (strokeToSend.size > 1) {
                 val dm = resources.displayMetrics
                 wsServer?.broadcastStroke(dm.widthPixels, dm.heightPixels, strokeToSend)
             }
@@ -214,7 +226,7 @@ class OverlayShowingService : Service() {
         override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint?) {
             touchPoint?.let {
                 synchronized(strokeLock) {
-                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, it.timestamp.toFloat()))
+                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, 0f))
                 }
             }
         }
@@ -227,8 +239,9 @@ class OverlayShowingService : Service() {
             val points = touchPointList.points
             if (points != null && points.isNotEmpty()) {
                 synchronized(strokeLock) {
+                    listStrokePoints.clear()
                     for (tp in points) {
-                        currentStrokePoints.add(floatArrayOf(tp.x, tp.y, tp.pressure, tp.timestamp.toFloat()))
+                        listStrokePoints.add(floatArrayOf(tp.x, tp.y, tp.pressure, 0f))
                     }
                 }
             }

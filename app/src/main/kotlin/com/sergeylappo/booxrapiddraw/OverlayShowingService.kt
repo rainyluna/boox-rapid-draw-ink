@@ -189,45 +189,52 @@ class OverlayShowingService : Service() {
     }
 
     private val callback: RawInputCallback = object : RawInputCallback() {
+        // Each stroke owns its own buffers so a quick next stroke can't wipe a
+        // stroke that is still waiting for its TouchPointList.
+        private var drawing = false
+        private var curMoves = mutableListOf<FloatArray>()
+        private var curList: MutableList<FloatArray>? = null
+        private var pendingList: Array<MutableList<FloatArray>?>? = null
+
+        private fun fa(tp: TouchPoint) = floatArrayOf(tp.x, tp.y, tp.pressure, 0f)
+
         override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint?) {
             synchronized(strokeLock) {
-                currentStrokePoints.clear()
-                listStrokePoints.clear()
-                touchPoint?.let {
-                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, 0f))
-                }
+                drawing = true
+                curMoves = mutableListOf()
+                curList = null
+                touchPoint?.let { curMoves.add(fa(it)) }
             }
         }
 
         override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint?) {
+            val moves: MutableList<FloatArray>
+            val holder: Array<MutableList<FloatArray>?>
             synchronized(strokeLock) {
-                touchPoint?.let {
-                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, 0f))
+                drawing = false
+                touchPoint?.let { curMoves.add(fa(it)) }
+                moves = curMoves
+                holder = arrayOf(curList)
+                pendingList = holder
+            }
+            // The SDK may deliver the full TouchPointList just after onEndRawDrawing.
+            mainHandler.postDelayed({
+                val pts: List<FloatArray>
+                synchronized(strokeLock) {
+                    val l = holder[0]
+                    pts = if (l != null && l.size > 1) l else moves
+                    if (pendingList === holder) pendingList = null
                 }
-            }
-            // The SDK may deliver the full TouchPointList just before or just after
-            // onEndRawDrawing; wait briefly and prefer the list when we have it.
-            mainHandler.postDelayed({ flushStroke() }, 120)
-        }
-
-        private fun flushStroke() {
-            val strokeToSend = mutableListOf<FloatArray>()
-            synchronized(strokeLock) {
-                strokeToSend.addAll(if (listStrokePoints.size > 1) listStrokePoints else currentStrokePoints)
-                currentStrokePoints.clear()
-                listStrokePoints.clear()
-            }
-            if (strokeToSend.size > 1) {
-                val dm = resources.displayMetrics
-                wsServer?.broadcastStroke(dm.widthPixels, dm.heightPixels, strokeToSend)
-            }
+                if (pts.size > 1) {
+                    val dm = resources.displayMetrics
+                    wsServer?.broadcastStroke(dm.widthPixels, dm.heightPixels, pts)
+                }
+            }, 80)
         }
 
         override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint?) {
             touchPoint?.let {
-                synchronized(strokeLock) {
-                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, 0f))
-                }
+                synchronized(strokeLock) { curMoves.add(fa(it)) }
             }
         }
 
@@ -236,14 +243,11 @@ class OverlayShowingService : Service() {
         }
 
         override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
-            val points = touchPointList.points
-            if (points != null && points.isNotEmpty()) {
-                synchronized(strokeLock) {
-                    listStrokePoints.clear()
-                    for (tp in points) {
-                        listStrokePoints.add(floatArrayOf(tp.x, tp.y, tp.pressure, 0f))
-                    }
-                }
+            val points = touchPointList.points ?: return
+            if (points.isEmpty()) return
+            val list = points.map { fa(it) }.toMutableList()
+            synchronized(strokeLock) {
+                if (drawing) curList = list else pendingList?.let { it[0] = list }
             }
         }
 

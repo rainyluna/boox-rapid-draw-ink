@@ -21,7 +21,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.sergeylappo.booxrapiddraw"
+        applicationId = "com.rainyluna.rapiddrawink"
         minSdk = 28
         targetSdk = 34
         versionCode = 7
@@ -75,4 +75,5 @@ dependencies {
     implementation(libs.androidx.window)
     implementation(libs.bundles.onyx)
     implementation(libs.hiddenapibypass)
+    implementation(libs.java.websocket)
 }

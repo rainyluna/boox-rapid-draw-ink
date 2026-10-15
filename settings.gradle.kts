@@ -24,6 +24,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Boox Rapid Draw"
+rootProject.name = "Rapid Draw Ink"
 include(":app")
  

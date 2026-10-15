@@ -40,6 +40,10 @@ class OverlayShowingService : Service() {
     private lateinit var wm: WindowManager
     private lateinit var overlayPaintingView: SurfaceView
 
+    private var wsServer: StrokeWebSocketServer? = null
+    private val currentStrokePoints = mutableListOf<FloatArray>()
+    private val strokeLock = Any()
+
     override fun onBind(intent: Intent) = null
 
     override fun onCreate() {
@@ -53,6 +57,16 @@ class OverlayShowingService : Service() {
 
         initPaint()
         initSurfaceView()
+        initWebSocketServer()
+    }
+
+    private fun initWebSocketServer() {
+        try {
+            wsServer = StrokeWebSocketServer(8765)
+            wsServer?.start()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -165,20 +179,60 @@ class OverlayShowingService : Service() {
         super.onDestroy()
         wm.removeViewImmediate(overlayPaintingView)
         touchHelper.closeRawDrawing()
+        try {
+            wsServer?.stop()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private val callback: RawInputCallback = object : RawInputCallback() {
-        override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint?) {}
+        override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint?) {
+            synchronized(strokeLock) {
+                currentStrokePoints.clear()
+                touchPoint?.let {
+                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, it.timestamp.toFloat()))
+                }
+            }
+        }
 
-        override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint?) {}
+        override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint?) {
+            val strokeToSend = mutableListOf<FloatArray>()
+            synchronized(strokeLock) {
+                touchPoint?.let {
+                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, it.timestamp.toFloat()))
+                }
+                strokeToSend.addAll(currentStrokePoints)
+                currentStrokePoints.clear()
+            }
+            if (strokeToSend.isNotEmpty()) {
+                val dm = resources.displayMetrics
+                wsServer?.broadcastStroke(dm.widthPixels, dm.heightPixels, strokeToSend)
+            }
+        }
 
-        override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint?) {}
+        override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint?) {
+            touchPoint?.let {
+                synchronized(strokeLock) {
+                    currentStrokePoints.add(floatArrayOf(it.x, it.y, it.pressure, it.timestamp.toFloat()))
+                }
+            }
+        }
 
         override fun onPenActive(point: TouchPoint?) {
             touchHelper.setRawDrawingEnabled(true)
         }
 
-        override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {}
+        override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
+            val points = touchPointList.points
+            if (points != null && points.isNotEmpty()) {
+                synchronized(strokeLock) {
+                    for (tp in points) {
+                        currentStrokePoints.add(floatArrayOf(tp.x, tp.y, tp.pressure, tp.timestamp.toFloat()))
+                    }
+                }
+            }
+        }
 
         override fun onBeginRawErasing(b: Boolean, touchPoint: TouchPoint?) {}
 

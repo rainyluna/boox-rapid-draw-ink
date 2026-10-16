@@ -23,6 +23,13 @@ class InkOnyxBridgePlugin extends Plugin {
     });
     this.connect();
     this.watchKeyboard();
+    // debug: record what switches Excalidraw to the eraser
+    this.registerDomEvent(window, "pointerdown", (e) => {
+      if (e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) || (e.buttons & 2))) {
+        this.stats.eraserBtn = (this.stats.eraserBtn || 0) + 1;
+        this.stats.lastEraserEvt = { button: e.button, buttons: e.buttons, t: Date.now() };
+      }
+    }, true);
   }
 
   onunload() {
@@ -106,24 +113,10 @@ class InkOnyxBridgePlugin extends Plugin {
       e.type === "freedraw" && !e.isDeleted && !String(e.id).startsWith("ox_") &&
       now - (e.updated || 0) < 3000);
 
-    // calibration: only a small residual correction on top of the exact transform.
-    // Ignore samples > 40 px (a different stroke matched) and require 3 consistent ones.
-    let dx = 0, dy = 0;
-    const med = this.median();
-    if (med && this.deltas.length >= 3) { dx = med[0]; dy = med[1]; }
-    const near = cands.filter((e) => overlaps(elBox(e), grow(shift(bb, dx / zoom, dy / zoom), pad)));
-    const best = near.sort((a, b) => b.points.length - a.points.length)[0];
-    if (best && best.points.length >= 4) {
-      const ux = best.x + best.points[0][0], uy = best.y + best.points[0][1];
-      const sx = (ux - pts[0][0]) * zoom, sy = (uy - pts[0][1]) * zoom;
-      if (Math.abs(sx) < 40 && Math.abs(sy) < 40) {
-        this.deltas.push([sx, sy]);
-        if (this.deltas.length > 15) this.deltas.shift();
-      }
-      const m = this.median();
-      if (m && this.deltas.length >= 3) { dx = m[0]; dy = m[1]; }
-    }
-    pts = pts.map((p) => [p[0] + dx / zoom, p[1] + dy / zoom, p[2]]);
+    // No auto-calibration: the exact transform (overlay origin + dpr + canvas rect)
+    // already lands within ~1 px; matching-based calibration grabbed wrong strokes
+    // and skewed good ones.
+    const dx = 0, dy = 0;
     const fb = bbox(pts);
     const kill = cands.filter((e) => overlaps(elBox(e), grow(fb, pad)));
 
@@ -147,9 +140,37 @@ class InkOnyxBridgePlugin extends Plugin {
     const next = els.filter((e) => !killIds.has(e.id)).concat([el]);
     api.updateScene({ elements: next, captureUpdate: "IMMEDIATELY" });
 
+    // Excalidraw's own (late, laggy) stroke can be committed AFTER ours. Remember
+    // our stroke's box for a few seconds and sweep any late duplicates.
+    this.recent = (this.recent || []).filter((r) => now - r.t < 4000);
+    this.recent.push({ t: now, box: grow(fb, pad), ids: new Set([el.id]) });
+    this.scheduleSweep(api);
+
     if (kill.length) this.stats.swapped++; else this.stats.noMatch++;
     this.stats.log.push({ n: data.pts.length, killed: kill.length, cands: cands.length, dx: Math.round(dx), dy: Math.round(dy) });
     if (this.stats.log.length > 20) this.stats.log.shift();
+  }
+
+  // Sweep late Excalidraw-native freedraw strokes that overlap one of our recent
+  // Onyx strokes. Runs a few times over ~2.5 s after each Onyx stroke.
+  scheduleSweep(api) {
+    const run = (left) => this.safe(() => {
+      const now = Date.now();
+      this.recent = (this.recent || []).filter((r) => now - r.t < 4000);
+      if (this.recent.length) {
+        const els = api.getSceneElements();
+        const dup = els.filter((e) => e.type === "freedraw" && !e.isDeleted &&
+          !String(e.id).startsWith("ox_") && now - (e.updated || 0) < 4000 &&
+          this.recent.some((r) => contains(r.box, elBox(e))));
+        if (dup.length) {
+          const ids = new Set(dup.map((e) => e.id));
+          api.updateScene({ elements: els.filter((e) => !ids.has(e.id)), captureUpdate: "NEVER" });
+          this.stats.late = (this.stats.late || 0) + dup.length;
+        }
+      }
+      if (left > 0) setTimeout(() => run(left - 1), 500);
+    });
+    setTimeout(() => run(4), 300);
   }
 
   median() {
@@ -204,5 +225,12 @@ function elBox(e) {
 function grow(b, d) { return { x1: b.x1 - d, y1: b.y1 - d, x2: b.x2 + d, y2: b.y2 + d }; }
 function shift(b, dx, dy) { return { x1: b.x1 + dx, y1: b.y1 + dy, x2: b.x2 + dx, y2: b.y2 + dy }; }
 function overlaps(a, b) { return a.x1 <= b.x2 && a.x2 >= b.x1 && a.y1 <= b.y2 && a.y2 >= b.y1; }
+// b is mostly inside a (allow a small spill), so neighbouring letters aren't swept
+function contains(a, b) {
+  const ix = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1));
+  const iy = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
+  const area = Math.max(1, (b.x2 - b.x1) * (b.y2 - b.y1));
+  return (ix * iy) / area > 0.7;
+}
 
 module.exports = InkOnyxBridgePlugin;

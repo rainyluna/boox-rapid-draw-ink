@@ -65,6 +65,14 @@ class OverlayShowingService : Service() {
     private fun initWebSocketServer() {
         try {
             wsServer = StrokeWebSocketServer(8765)
+            wsServer?.onCommand = { cmd ->
+                mainHandler.post {
+                    when (cmd) {
+                        "pause" -> pauseRawDrawing()
+                        "resume" -> { paused = false; reinitRawDrawing() }
+                    }
+                }
+            }
             wsServer?.start()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -151,34 +159,65 @@ class OverlayShowingService : Service() {
     private fun initSurfaceView() {
         touchHelper = TouchHelper.create(overlayPaintingView, 2, callback)
         touchHelper.setPenUpRefreshTimeMs(1000)
-        overlayPaintingView.addOnLayoutChangeListener(object : OnLayoutChangeListener {
-            override fun onLayoutChange(
-                v: View,
-                left: Int,
-                top: Int,
-                right: Int,
-                bottom: Int,
-                oldLeft: Int,
-                oldTop: Int,
-                oldRight: Int,
-                oldBottom: Int
-            ) {
-                val bounds = Rect(0, 0, right, bottom)
-                overlayPaintingView.getLocalVisibleRect(bounds)
-                touchHelper.setStrokeColor(Color.BLACK)
-                touchHelper.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
-                touchHelper.openRawDrawing()
-                touchHelper.setStrokeWidth(STROKE_WIDTH).setLimitRect(bounds, listOf())
-                touchHelper.setRawInputReaderEnable(!touchHelper.isRawDrawingInputEnabled)
-                overlayPaintingView.addOnLayoutChangeListener(this)
-            }
-        })
+        // Upstream re-added this listener inside itself and *toggled* the raw input
+        // reader on every layout pass, so any relayout (e.g. the IME) could switch it off.
+        overlayPaintingView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            reinitRawDrawing()
+        }
 
         overlayPaintingView.setOnTouchListener { _: View?, _: MotionEvent? -> true }
+        mainHandler.postDelayed(watchdog, 3000)
+    }
+
+    @Volatile private var paused = false
+    private var rawOpened = false
+
+    private fun reinitRawDrawing() {
+        if (paused) return
+        try {
+            val loc = IntArray(2)
+            overlayPaintingView.getLocationOnScreen(loc)
+            wsServer?.originX = loc[0]
+            wsServer?.originY = loc[1]
+            val bounds = Rect()
+            overlayPaintingView.getLocalVisibleRect(bounds)
+            touchHelper.setStrokeColor(Color.BLACK)
+            touchHelper.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
+            if (!rawOpened) { touchHelper.openRawDrawing(); rawOpened = true }
+            touchHelper.setStrokeWidth(STROKE_WIDTH).setLimitRect(bounds, listOf())
+            touchHelper.setRawInputReaderEnable(true)
+            touchHelper.setRawDrawingEnabled(true)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun pauseRawDrawing() {
+        paused = true
+        try {
+            touchHelper.setRawDrawingEnabled(false)
+            touchHelper.setRawInputReaderEnable(false)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // Another raw-drawing client (Onyx handwriting keyboard, Notes...) can steal the
+    // pen reader; re-claim it periodically while not paused.
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!paused) {
+                try {
+                    if (!touchHelper.isRawDrawingInputEnabled) reinitRawDrawing()
+                } catch (e: Exception) { }
+            }
+            mainHandler.postDelayed(this, 3000)
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        mainHandler.removeCallbacks(watchdog)
         wm.removeViewImmediate(overlayPaintingView)
         touchHelper.closeRawDrawing()
         try {

@@ -22,6 +22,7 @@ class InkOnyxBridgePlugin extends Plugin {
       },
     });
     this.connect();
+    this.watchKeyboard();
   }
 
   onunload() {
@@ -35,7 +36,7 @@ class InkOnyxBridgePlugin extends Plugin {
     let ws;
     try { ws = new WebSocket("ws://127.0.0.1:8765"); } catch (e) { return this.later(); }
     this.ws = ws;
-    ws.onopen = () => { this.retry = 1000; };
+    ws.onopen = () => { this.retry = 1000; this.paused = undefined; if (this.kbUpdate) this.kbUpdate(); };
     ws.onmessage = (ev) => {
       if (!this.enabled) return;
       let data;
@@ -85,9 +86,14 @@ class InkOnyxBridgePlugin extends Plugin {
     const canvas = view.contentEl.querySelector("canvas.excalidraw__canvas") || view.contentEl.querySelector("canvas");
     const r = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
     const zoom = (st.zoom && st.zoom.value) || 1;
+    // Onyx points are in the overlay window's coords (physical px). Shift them by the
+    // overlay's screen origin, then by where the webview sits on screen (status bar,
+    // keyboard resize) so they land in viewport CSS px.
+    const ox = (data.ox || 0) / dpr, oy = (data.oy || 0) / dpr;
+    const wy = this.webviewTop();
     const toScene = (px, py) => [
-      (px / dpr - r.left) / zoom - st.scrollX,
-      (py / dpr - r.top) / zoom - st.scrollY,
+      (px / dpr + ox - r.left) / zoom - st.scrollX,
+      (py / dpr + oy - wy - r.top) / zoom - st.scrollY,
     ];
 
     let pts = data.pts.map((p) => { const s = toScene(p[0], p[1]); return [s[0], s[1], p[2]]; });
@@ -100,17 +106,22 @@ class InkOnyxBridgePlugin extends Plugin {
       e.type === "freedraw" && !e.isDeleted && !String(e.id).startsWith("ox_") &&
       now - (e.updated || 0) < 3000);
 
-    // calibration: constant offset (CSS px) between Onyx and webview coords
+    // calibration: only a small residual correction on top of the exact transform.
+    // Ignore samples > 40 px (a different stroke matched) and require 3 consistent ones.
     let dx = 0, dy = 0;
     const med = this.median();
-    if (med) { dx = med[0]; dy = med[1]; }
-    const near = cands.filter((e) => overlaps(elBox(e), grow(shift(bb, dx / zoom, dy / zoom), pad + 60 / zoom)));
+    if (med && this.deltas.length >= 3) { dx = med[0]; dy = med[1]; }
+    const near = cands.filter((e) => overlaps(elBox(e), grow(shift(bb, dx / zoom, dy / zoom), pad)));
     const best = near.sort((a, b) => b.points.length - a.points.length)[0];
     if (best && best.points.length >= 4) {
       const ux = best.x + best.points[0][0], uy = best.y + best.points[0][1];
-      this.deltas.push([(ux - pts[0][0]) * zoom, (uy - pts[0][1]) * zoom]);
-      if (this.deltas.length > 9) this.deltas.shift();
-      const m = this.median(); dx = m[0]; dy = m[1];
+      const sx = (ux - pts[0][0]) * zoom, sy = (uy - pts[0][1]) * zoom;
+      if (Math.abs(sx) < 40 && Math.abs(sy) < 40) {
+        this.deltas.push([sx, sy]);
+        if (this.deltas.length > 15) this.deltas.shift();
+      }
+      const m = this.median();
+      if (m && this.deltas.length >= 3) { dx = m[0]; dy = m[1]; }
     }
     pts = pts.map((p) => [p[0] + dx / zoom, p[1] + dy / zoom, p[2]]);
     const fb = bbox(pts);
@@ -145,6 +156,39 @@ class InkOnyxBridgePlugin extends Plugin {
     if (!this.deltas.length) return null;
     const m = (a) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
     return [m(this.deltas.map((d) => d[0])), m(this.deltas.map((d) => d[1]))];
+  }
+
+  // Where the webview's top edge is on the physical screen, in CSS px.
+  // screen.height - innerHeight = status bar (+ nav bar / keyboard when shown);
+  // the status bar is on top, so use the value measured while no keyboard is up.
+  webviewTop() {
+    // On this Boox, Obsidian is edge-to-edge (screen.height ≈ innerHeight), so the
+    // webview starts at y=0. Only trust small gaps; a big gap means a keyboard resize.
+    const gap = (window.screen.height - window.innerHeight);
+    if (gap >= 0 && gap < 120) this.topGap = gap;
+    return this.topGap != null ? this.topGap : 0;
+  }
+
+  // Pause Onyx raw drawing while the user types (keyboard / text editing),
+  // so the IME and the pen-to-text keyboard get the pen; resume afterwards.
+  watchKeyboard() {
+    const send = (type) => { try { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ type })); } catch (e) {} };
+    const isText = (el) => el && (el.isContentEditable || el.tagName === "TEXTAREA" ||
+      (el.tagName === "INPUT" && !/^(checkbox|radio|range|button|submit|color)$/i.test(el.type || "")));
+    const update = () => {
+      const typing = isText(document.activeElement);
+      const vv = window.visualViewport;
+      const kb = (window.screen.height - window.innerHeight > 120) ||
+        (vv ? (window.innerHeight - vv.height > 120) : false);
+      const pause = typing || kb;
+      this.kbOpen = kb;
+      if (pause !== this.paused) { this.paused = pause; send(pause ? "pause" : "resume"); }
+    };
+    this.registerDomEvent(document, "focusin", () => setTimeout(update, 50));
+    this.registerDomEvent(document, "focusout", () => setTimeout(update, 50));
+    if (window.visualViewport) this.registerDomEvent(window.visualViewport, "resize", update);
+    this.registerInterval(window.setInterval(update, 1500));
+    this.kbUpdate = update;
   }
 }
 

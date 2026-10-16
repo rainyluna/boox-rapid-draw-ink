@@ -28,8 +28,21 @@ class StrokeWebSocketServer(port: Int = 8765) : WebSocketServer(InetSocketAddres
     }
 
     override fun onMessage(conn: WebSocket, message: String?) {
-        Log.d(TAG, "Received message from client: $message")
+        if (message == null) return
+        try {
+            val type = JSONObject(message).optString("type")
+            if (type.isNotEmpty()) onCommand?.invoke(type)
+        } catch (e: Exception) {
+            Log.w(TAG, "bad message: $message")
+        }
     }
+
+    /** Called (on the WS thread) with "pause" / "resume" from the Obsidian plugin. */
+    @Volatile var onCommand: ((String) -> Unit)? = null
+
+    /** Overlay window's position on screen in physical px; sent with every stroke. */
+    @Volatile var originX: Int = 0
+    @Volatile var originY: Int = 0
 
     override fun onError(conn: WebSocket?, ex: Exception?) {
         Log.e(TAG, "WebSocket error: ${ex?.message}", ex)
@@ -49,6 +62,8 @@ class StrokeWebSocketServer(port: Int = 8765) : WebSocketServer(InetSocketAddres
             json.put("type", "stroke")
             json.put("w", widthPx)
             json.put("h", heightPx)
+            json.put("ox", originX)
+            json.put("oy", originY)
 
             val ptsArray = JSONArray()
             for (p in points) {

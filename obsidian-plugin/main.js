@@ -23,6 +23,25 @@ class InkOnyxBridgePlugin extends Plugin {
     });
     this.connect();
     this.watchKeyboard();
+
+    // Auto-reload active Excalidraw view if modified externally (e.g. by LiveSync from laptop/phone)
+    this.registerEvent(this.app.vault.on("modify", async (file) => {
+      const ex = this.app.plugins.plugins["obsidian-excalidraw-plugin"];
+      const v = ex?.activeExcalidrawView;
+      if (!v || v.file?.path !== file.path) return;
+      if (Date.now() - (v.lastSaveTimestamp || 0) < 1500) return; // ignore our own saves
+      try {
+        const data = await this.app.vault.read(file);
+        const ed = new (ex.excalidrawConfig?.ExcalidrawData || Object.getPrototypeOf(v.excalidrawData).constructor)(ex);
+        await ed.loadData(data, file, 0);
+        v.synchronizeWithData(ed);
+        ed.destroy?.();
+      } catch (err) {
+        // fallback
+        v.reload?.(true, file);
+      }
+    }));
+
     // debug: record what switches Excalidraw to the eraser
     this.registerDomEvent(window, "pointerdown", (e) => {
       if (e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) || (e.buttons & 2))) {

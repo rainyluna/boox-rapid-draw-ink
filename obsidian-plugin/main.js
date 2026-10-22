@@ -42,6 +42,55 @@ class InkOnyxBridgePlugin extends Plugin {
       }
     }));
 
+    // Palm rejection: drop TOUCH pointers (never pen) on the Excalidraw canvas while the pen
+    // is hovering/drawing or was used in the last PALM_MS, or when the contact is palm-sized.
+    this.palmGuard = true;
+    this.lastPen = 0;
+    const PALM_MS = 1500;
+    this.addCommand({
+      id: "toggle-palm",
+      name: "Toggle palm rejection",
+      callback: () => { this.palmGuard = !this.palmGuard; new Notice("Palm rejection " + (this.palmGuard ? "ON" : "OFF")); },
+    });
+    const penSeen = (e) => { if (e.pointerType === "pen") this.lastPen = Date.now(); };
+    for (const t of ["pointerover", "pointerenter", "pointermove", "pointerdown", "pointerup"])
+      this.registerDomEvent(window, t, penSeen, { capture: true, passive: true });
+    const onCanvas = (e) => e.target && e.target.closest && e.target.closest(".excalidraw");
+    const isPalm = (e) => {
+      if (!this.palmGuard || e.pointerType !== "touch" || !onCanvas(e)) return false;
+      const big = (e.width || 0) > 40 || (e.height || 0) > 40;
+      return big || Date.now() - this.lastPen < PALM_MS;
+    };
+    const blockedIds = new Set();
+    const guard = (e) => {
+      try {
+        if (e.type === "pointerdown" ? isPalm(e) : blockedIds.has(e.pointerId)) {
+          if (e.type === "pointerdown") {
+            blockedIds.add(e.pointerId);
+            this.stats.palm = (this.stats.palm || 0) + 1;
+            this.stats.lastPalm = { w: e.width, h: e.height, sincePen: Date.now() - this.lastPen };
+          }
+          if (e.type === "pointerup" || e.type === "pointercancel") blockedIds.delete(e.pointerId);
+          e.stopImmediatePropagation();
+          if (e.cancelable) e.preventDefault();
+        }
+      } catch (err) { this.stats.errors++; this.stats.lastErr = String(err); }
+    };
+    for (const t of ["pointerdown", "pointermove", "pointerup", "pointercancel"])
+      this.registerDomEvent(window, t, guard, { capture: true });
+    // Also stop palm touch* events (gesture/pinch handlers) while the pen is active.
+    const touchGuard = (e) => {
+      if (!this.palmGuard || !onCanvas(e)) return;
+      // Never block stylus-derived touch events (Chrome fires them for the pen too).
+      for (const t of e.changedTouches || []) if (t.touchType === "stylus") return;
+      if (Date.now() - this.lastPen < PALM_MS) {
+        this.stats.palmTouch = (this.stats.palmTouch || 0) + 1;
+        e.stopImmediatePropagation(); if (e.cancelable) e.preventDefault();
+      }
+    };
+    for (const t of ["touchstart", "touchmove"])
+      this.registerDomEvent(window, t, touchGuard, { capture: true, passive: false });
+
     // debug: record what switches Excalidraw to the eraser
     this.registerDomEvent(window, "pointerdown", (e) => {
       if (e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) || (e.buttons & 2))) {

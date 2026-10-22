@@ -24,8 +24,8 @@ android {
         applicationId = "com.rainyluna.rapiddrawink"
         minSdk = 28
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.0.7-alpha"
+        versionCode = 8
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

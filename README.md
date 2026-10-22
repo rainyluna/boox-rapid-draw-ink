@@ -1,40 +1,53 @@
-## About the Project
-Boox Rapid Draw is a tool designed to enable the use of Boox stylus devices with a stylus in applications beyond those provided by Boox. This project is an early prototype, and it modifies the default behavior of your device.
+# Rapid Draw Ink
 
-## F.A.Q.
-Q: **How to install the APP?** <br>
-<details>
-  <summary>A: Android and the APP would guide you through the installation process, but detailed manual is under the spoiler</summary>
-  
-  1. Download the APK
-  2. Click on it
-  3. Accept that you agree that app might be dangerous for your device
-  4. Click install
-  5. After the installation is done - ensure that you don't have "freeze" on the app (the app would have a snowflake in the corner)
-     1. If the app has it - long click on the icon
-     2. Click unfreeze
-  6. Start the APP
-  7. Read the warning and if you accept it, click "Allow", this would redirect you to settings
-  8. Open "Boox Rapid Draw" application and enable "Allow display over other apps" toggle.
-  9. You're set! The app should be functional right away!
-  ![install](https://github.com/user-attachments/assets/8bf3f291-911f-4a09-aa7f-e0bf7af95451)
-</details>
+Rapid Draw Ink brings low-latency, responsive handwriting to Obsidian Excalidraw on Onyx Boox e-ink devices by bridging hardware-accelerated stylus strokes into Obsidian via a local WebSocket.
 
-Q: **How did you configure it to be accessible in navi ball?** <br>
-<details>
-  <summary>A: By setting one of the Navigation ball's options to open app. Expand for more details</summary>
+This project is a fork of [boox-rapid-draw](https://github.com/sergeylappo/boox-rapid-draw) by Sergey Lappo.
 
-  1. Click on navi ball
-  2. Click on navi ball settings icon
-  3. Select any free option, or the option you're ready to give up on
-  4. Select "Open app" option
-  5. Click on "None" link
-  6. Select "Boox Rapid Draw"
-  7. Return back two times
-  8. You're quick access is ready to rock!
-  ![configure_navi_ball](https://github.com/user-attachments/assets/c40c39aa-7a7d-4ad0-afa6-9bfa14fd9a82)
+## How It Works
 
-</details>
+The original Boox Rapid Draw creates a floating raw-drawing overlay using the Onyx Android SDK to render zero-latency pen strokes on e-ink.
 
-## Disclaimer
-The author of this application is not affiliated with Boox in any way. Use of this app is at your own risk. This is a prototype software, which may cause damage to your device. The author is not responsible for any damage caused by using this app directly or indirectly.
+Rapid Draw Ink extends this by streaming raw Onyx stroke coordinates over a local WebSocket server (`ws://127.0.0.1:8765`). A companion Obsidian plugin (`ink-onyx-bridge`) listens on this socket and seamlessly swaps out Excalidraw native freedraw strokes for smooth, accurate strokes built from the high-frequency Onyx hardware points without ever blocking pen input.
+
+The plugin also accounts for overlay offsets and display pixel ratios, sweeps duplicate native strokes, pauses raw drawing when the virtual keyboard/IME is active, auto-reloads Excalidraw views updated externally (e.g. via LiveSync), and provides palm rejection (ignoring touch inputs on canvas while the pen is active).
+
+## Requirements
+
+- Onyx Boox e-ink tablet (tested on Boox Note Air 5C).
+- Obsidian Mobile app with the [Obsidian Excalidraw plugin](https://github.com/zsviczian/obsidian-excalidraw-plugin) (tested with v2.15.3).
+- Onyx refresh mode for Obsidian set to **Regal** (recommended for cleanest display with minimal ghosting).
+
+(Note: Support for the Ink / tldraw plugin is currently experimental and not working reliably).
+
+## Installation and Setup
+
+1. **Install the Android App**:
+   - Download and install `RapidDrawInk-0.2.0.apk` from the [Releases](https://github.com/rainyluna/boox-rapid-draw-ink/releases) page.
+   - **Important**: Ensure the original Boox Rapid Draw is turned off or uninstalled to prevent overlay conflicts.
+   - Launch Rapid Draw Ink and grant the "Display over other apps" permission when prompted.
+   - **Prevent App Freezing**: In Onyx App Optimization for Rapid Draw Ink, set background activity to allowed / disable sleep freezing. If the app icon shows a snowflake badge, long-press the icon and select **Unfreeze**.
+
+2. **Install the Companion Obsidian Plugin**:
+   - Download `ink-onyx-bridge-0.2.0.zip` from Releases or copy the contents of `obsidian-plugin/` (`manifest.json` and `main.js`) into your vault directory at:
+     `<vault>/.obsidian/plugins/ink-onyx-bridge/`
+   - Open Obsidian, go to Settings -> Community plugins, reload installed plugins, and enable **Onyx Ink Bridge**.
+   - Optional: Use the command palette command `Toggle palm rejection` to enable/disable touch blocking while drawing.
+
+## Known Issues and Limitations
+
+- Tested only on a Boox Note Air 5C. Behavior on other Onyx devices or Android versions may vary.
+- Alignment offsets may occasionally occur depending on zoom level or layout orientation.
+- Keyboard or OCR handwriting inputs may occasionally conflict with overlay drawing.
+- Single-dot stray strokes can occasionally appear when lifting the stylus.
+- If drawing stops responding, check if the Onyx system froze the background service.
+
+## Built with AI Assistance
+
+This fork was developed by Luna with significant AI assistance building upon Sergey Lappo original foundation.
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
+- Original work Copyright (c) 2024 Sergey Lappo
+- Fork additions Copyright (c) 2026 rainyluna

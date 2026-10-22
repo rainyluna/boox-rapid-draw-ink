@@ -1,9 +1,9 @@
 {
   "id": "ink-onyx-bridge",
-  "name": "Ink & Excalidraw Onyx Bridge",
-  "version": "0.1.0",
+  "name": "Onyx Ink Bridge",
+  "version": "0.2.0",
   "minAppVersion": "0.15.0",
-  "description": "Bridges low-latency, high-precision Onyx SDK pen strokes from Rapid Draw Ink into Obsidian Ink and Excalidraw.",
+  "description": "Bridges low-latency, high-precision Onyx SDK pen strokes from Rapid Draw Ink into Obsidian Excalidraw (Ink experimental).",
   "author": "rainyluna",
   "isDesktopOnly": false
 }

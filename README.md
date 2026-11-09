@@ -14,7 +14,7 @@ The plugin also accounts for overlay offsets and display pixel ratios, sweeps du
 
 ## Requirements
 
-- Onyx Boox e-ink tablet (tested on Boox Note Air 5C).
+- Onyx Boox e-ink tablet (tested on Boox Note Air 5C and Note Air 6C).
 - Obsidian Mobile app with the [Obsidian Excalidraw plugin](https://github.com/zsviczian/obsidian-excalidraw-plugin) (tested with v2.15.3).
 - Onyx refresh mode for Obsidian set to **Regal** (recommended for cleanest display with minimal ghosting).
 
@@ -36,7 +36,7 @@ The plugin also accounts for overlay offsets and display pixel ratios, sweeps du
 
 ## Known Issues and Limitations
 
-- Tested only on a Boox Note Air 5C. Behavior on other Onyx devices or Android versions may vary.
+- Tested only on a Boox Note Air 5C and Note Air 6C. Behavior on other Onyx devices or Android versions may vary.
 - Alignment offsets may occasionally occur depending on zoom level or layout orientation.
 - Keyboard or OCR handwriting inputs may occasionally conflict with overlay drawing.
 - Single-dot stray strokes can occasionally appear when lifting the stylus.

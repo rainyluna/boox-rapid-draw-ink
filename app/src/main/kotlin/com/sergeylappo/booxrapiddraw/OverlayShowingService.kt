@@ -12,6 +12,8 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Build
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.SurfaceView
@@ -26,12 +28,14 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.onyx.android.sdk.data.note.TouchPoint
+import com.onyx.android.sdk.device.Device
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
 import com.onyx.android.sdk.pen.data.TouchPointList
 
 private const val CHANNEL_ID = "rapid_draw_channel_overlay_01"
 private const val STROKE_WIDTH = 3.0f
+private const val TAG = "RapidDrawInk"
 
 class OverlayShowingService : Service() {
     private val paint = Paint()
@@ -50,6 +54,13 @@ class OverlayShowingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // The Onyx device SDK picks its EPD/pen implementation from ro.board.platform;
+        // an unknown platform falls back to BaseDevice and raw drawing silently gets nothing.
+        Log.i(
+            TAG,
+            "onCreate model=${Build.MODEL} sdk=${Build.VERSION.SDK_INT} " +
+                "onyxDevice=${Device.currentDevice()?.javaClass?.simpleName}"
+        )
 
         createForegroundNotification()
 
@@ -75,7 +86,7 @@ class OverlayShowingService : Service() {
             }
             wsServer?.start()
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to start WebSocket server", e)
         }
     }
 
@@ -187,18 +198,24 @@ class OverlayShowingService : Service() {
             touchHelper.setStrokeWidth(STROKE_WIDTH).setLimitRect(bounds, listOf())
             touchHelper.setRawInputReaderEnable(true)
             touchHelper.setRawDrawingEnabled(true)
+            Log.i(
+                TAG,
+                "reinitRawDrawing bounds=$bounds origin=(${loc[0]},${loc[1]}) " +
+                    "inputEnabled=${touchHelper.isRawDrawingInputEnabled}"
+            )
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "reinitRawDrawing failed", e)
         }
     }
 
     private fun pauseRawDrawing() {
         paused = true
+        Log.i(TAG, "pauseRawDrawing")
         try {
             touchHelper.setRawDrawingEnabled(false)
             touchHelper.setRawInputReaderEnable(false)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "pauseRawDrawing failed", e)
         }
     }
 
@@ -208,8 +225,13 @@ class OverlayShowingService : Service() {
         override fun run() {
             if (!paused) {
                 try {
-                    if (!touchHelper.isRawDrawingInputEnabled) reinitRawDrawing()
-                } catch (e: Exception) { }
+                    if (!touchHelper.isRawDrawingInputEnabled) {
+                        Log.w(TAG, "watchdog: raw input disabled, re-initialising")
+                        reinitRawDrawing()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "watchdog failed", e)
+                }
             }
             mainHandler.postDelayed(this, 3000)
         }
@@ -223,7 +245,7 @@ class OverlayShowingService : Service() {
         try {
             wsServer?.stop()
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to stop WebSocket server", e)
         }
     }
 
